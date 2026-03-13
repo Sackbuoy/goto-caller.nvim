@@ -1,8 +1,7 @@
 local M = {}
 
 function M.goto_caller()
-  local ts_utils = require("nvim-treesitter.ts_utils")
-  local node = ts_utils.get_node_at_cursor()
+  local node = vim.treesitter.get_node()
 
   -- Walk up to find the enclosing function
   while node do
@@ -41,20 +40,32 @@ function M.goto_caller()
   local sr, sc = name_node:start()
   vim.api.nvim_win_set_cursor(0, { sr + 1, sc })
 
-  local client = vim.lsp.get_clients({ bufnr = 0 })[1]
-  local params = vim.lsp.util.make_position_params(0, client.offset_encoding)
+  local clients = vim.lsp.get_clients({ bufnr = 0 })
+  local client = nil
+  for _, c in ipairs(clients) do
+    if c.supports_method("textDocument/prepareCallHierarchy", 0) then
+      client = c
+      break
+    end
+  end
 
+  if not client then
+    vim.notify("No LSP client supports call hierarchy", vim.log.levels.WARN)
+    return
+  end
+
+  local params = vim.lsp.util.make_position_params(0, client.offset_encoding)
   -- Immediately restore cursor so nothing visible changes
   vim.api.nvim_win_set_cursor(0, save_pos)
 
-  vim.lsp.buf_request(0, "textDocument/prepareCallHierarchy", params, function(err, result)
+  client.request(client, "textDocument/prepareCallHierarchy", params, function(err, result)
     if err or not result or #result == 0 then
       vim.notify("LSP: no call hierarchy available", vim.log.levels.WARN)
       return
     end
 
     local item = result[1]
-    vim.lsp.buf_request(0, "callHierarchy/incomingCalls", { item = item }, function(err2, calls)
+    client.request(client, "callHierarchy/incomingCalls", { item = item }, function(err2, calls)
       if err2 or not calls or #calls == 0 then
         vim.notify("No callers found", vim.log.levels.INFO)
         return
